@@ -14,7 +14,7 @@
 <b>Compile</b>
 > - <strong>Contract should be in /contracts</strong><br>
 > - Run contract_compile_script<br>
->> node .\contract_deployment_script.js<br>
+>> node .\contract_compile_script.js<br>
 
 <b>Deploy</b>
 > - <strong>Compiled contract JSON should be in /contracts</strong><br>
