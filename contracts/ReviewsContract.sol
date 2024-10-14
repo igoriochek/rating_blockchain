@@ -1,5 +1,38 @@
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.0;
+pragma solidity >=0.8.4;
+
+// SPDX-License-Identifier: MIT
+// Source:
+// https://github.com/ensdomains/ens-contracts/blob/master/contracts/ethregistrar/StringUtils.sol
+library StringUtils {
+    /**
+     * @dev Returns the length of a given string
+     *
+     * @param s The string to measure the length of
+     * @return The length of the input string
+     */
+    function strlen(string memory s) internal pure returns (uint256) {
+        uint256 len;
+        uint256 i = 0;
+        uint256 bytelength = bytes(s).length;
+        for (len = 0; i < bytelength; len++) {
+            bytes1 b = bytes(s)[i];
+            if (b < 0x80) {
+                i += 1;
+            } else if (b < 0xE0) {
+                i += 2;
+            } else if (b < 0xF0) {
+                i += 3;
+            } else if (b < 0xF8) {
+                i += 4;
+            } else if (b < 0xFC) {
+                i += 5;
+            } else {
+                i += 6;
+            }
+        }
+        return len;
+    }
+}
 
 library FloatString {
     function toFloatingPointString(uint integerPart, uint fractionalPart) internal pure returns (string memory) {
@@ -37,11 +70,13 @@ contract  DomainContainer {
     struct Domain {
         uint ID;
         string name;
+        string desc;
     }
     mapping(string => Domain) private domains; // domainName => Domain
     mapping(uint => string) private domainNameOfID; // domainID => domainName
     mapping(string => bool) private domainExists; // domainName => bool
     mapping(string => mapping(string => bool)) private domainHasItemReviews; // domainName => itemName => bool
+    mapping(string => address) private domainOwner; // domainName => owner
 
     modifier onlyOwner() {
         require(msg.sender == owner, "Only owner can use this function");
@@ -56,6 +91,14 @@ contract  DomainContainer {
     constructor(address _mainContract){
         owner = msg.sender;
         mainContract = _mainContract;
+    }
+
+    function getDomainOwner(string memory domainName) public view returns (address) {
+        return domainOwner[domainName];
+    }
+
+    function setDomainOwner(string memory domainName, address _owner) public onlyMainContract {
+        domainOwner[domainName] = _owner;
     }
 
     function checkIfDomainExists(string memory domainName) public view returns (bool) {
@@ -81,6 +124,16 @@ contract  DomainContainer {
         domainIDIterator++;
     }
 
+    function setDomainDescription(string memory domainName, string memory desc) public onlyMainContract {
+        if (!domainExists[domainName]) {
+            revert("Domain does not exist");
+        }
+        if (StringUtils.strlen(desc) > 256) {
+            revert("Description too long");
+        }
+        domains[domainName].desc = desc;
+    }
+
     function checkIfDomainItemReviewsExist(string memory domainName, string memory itemName) public view returns (bool) {
         return domainHasItemReviews[domainName][itemName];
     }
@@ -98,10 +151,10 @@ contract ItemContainer {
     struct Item {
         uint ID;
         string name;
-        // string infoIPFSHash; // IPFS hash of item info
         string[] availableOnDomainNames;
         string rating; // Average rating of item as string
         mapping(string => string) itemDomainRating; // domainName => rating
+        mapping(string => string) itemDesc; // domainName => description
     }
 
     mapping(string => Item) private items; // itemName => Item
@@ -136,11 +189,17 @@ contract ItemContainer {
         string rating;
     }
 
+    struct ItemDomainDescription {
+        string domainName;
+        string desc;
+    }
+
     struct ReturnableItem {
         uint ID;
         string name;
         string[] availableOnDomainNames;
         string rating;
+        ItemDomainDescription[] domainDescriptions;
         DomainRating[] domainRatings;
     }
 
@@ -151,14 +210,23 @@ contract ItemContainer {
             Item storage item = items[itemName];
 
             uint domainCount = item.availableOnDomainNames.length;
+            ItemDomainDescription[] memory domainDescriptions = new ItemDomainDescription[](domainCount);
             DomainRating[] memory domainRatings = new DomainRating[](domainCount);
 
+            uint k = 0;
             for (uint j = 0; j < domainCount; j++) {
                 string memory domainName = item.availableOnDomainNames[j];
                 domainRatings[j] = DomainRating({
                     domainName: domainName,
                     rating: item.itemDomainRating[domainName]
                 });
+                if (bytes(item.itemDesc[domainName]).length > 0) {
+                    domainDescriptions[k] = ItemDomainDescription({
+                        domainName: domainName,
+                        desc: item.itemDesc[domainName]
+                    });
+                    k++;
+                }
             }
 
             itemsArray[i] = ReturnableItem({
@@ -166,6 +234,7 @@ contract ItemContainer {
                 name: item.name,
                 availableOnDomainNames: item.availableOnDomainNames,
                 rating: item.rating,
+                domainDescriptions: domainDescriptions,
                 domainRatings: domainRatings
             });
         }
@@ -178,14 +247,23 @@ contract ItemContainer {
         Item storage item = items[itemName];
 
         uint domainCount = item.availableOnDomainNames.length;
+        ItemDomainDescription[] memory domainDescriptions = new ItemDomainDescription[](domainCount);
         DomainRating[] memory domainRatings = new DomainRating[](domainCount);
 
-        for (uint i = 0; i < domainCount; i++) {
-            string memory domainName = item.availableOnDomainNames[i];
-            domainRatings[i] = DomainRating({
+        uint k = 0;
+        for (uint j = 0; j < domainCount; j++) {
+            string memory domainName = item.availableOnDomainNames[j];
+            domainRatings[j] = DomainRating({
                 domainName: domainName,
                 rating: item.itemDomainRating[domainName]
             });
+            if (bytes(item.itemDesc[domainName]).length > 0) {
+                domainDescriptions[k] = ItemDomainDescription({
+                    domainName: domainName,
+                    desc: item.itemDesc[domainName]
+                });
+                k++;
+            }
         }
 
         return ReturnableItem({
@@ -193,6 +271,7 @@ contract ItemContainer {
             name: item.name,
             rating: item.rating,
             availableOnDomainNames: item.availableOnDomainNames,
+            domainDescriptions: domainDescriptions,
             domainRatings: domainRatings
         });
     }
@@ -235,6 +314,16 @@ contract ItemContainer {
         itemTotalAccumulatedRating[itemName] += rating;
         averageRating = (itemTotalAccumulatedRating[itemName] * 100) / itemReviewCount[itemName];
         items[itemName].rating = FloatString.toFloatingPointString(averageRating / 100, averageRating % 100);
+    }
+
+    function setItemDescription(string memory itemName, string memory domainName, string memory desc) public onlyMainContract {
+        if (!itemExists[itemName]) {
+            revert("Item does not exist");
+        }
+        if (StringUtils.strlen(desc) > 256) {
+            revert("Description too long");
+        }
+        items[itemName].itemDesc[domainName] = desc;
     }
 }
 
@@ -363,6 +452,27 @@ contract ReviewsContract {
         return userContainer;
     }
 
+    function bindAddressToDomain(string memory domainName, address _owner) external {
+        if (!domainContainer.checkIfDomainExists(domainName)) {
+            domainContainer.addDomain(domainName);
+        }
+        require(domainContainer.getDomainOwner(domainName) == address(0), "Domain already has an owner");
+        domainContainer.setDomainOwner(domainName, _owner);
+    }
+
+    function setDomainDescription(string memory domainName, string memory desc) external {
+        require(domainContainer.getDomainOwner(domainName) == msg.sender, "Only domain owner can set description");
+        domainContainer.setDomainDescription(domainName, desc);
+    }
+
+    function setItemDescription(string memory itemName, string memory domainName, string memory desc) external {
+        require(domainContainer.getDomainOwner(domainName) == msg.sender, "Only domain owner can set description");
+        if (!itemContainer.checkIfItemExists(itemName)) {
+            itemContainer.addItem(itemName);
+        }
+        itemContainer.setItemDescription(itemName, domainName, desc);
+    }
+
     function addReview(string memory domainName, string memory itemName, string memory comment, uint8 rating) external {
         require(rating >= 1 && rating <= 5, "Rating not between 1 and 5");
         if (bytes(domainName).length == 0 || bytes(itemName).length == 0) {
@@ -376,7 +486,8 @@ contract ReviewsContract {
 
         // Check if domain exists
         if (!domainContainer.checkIfDomainExists(domainName)) {
-            domainContainer.addDomain(domainName);
+            revert("Domain does not exist");
+            //domainContainer.addDomain(domainName);
         }
 
         // Check if item exists
